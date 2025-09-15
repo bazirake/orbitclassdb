@@ -24,72 +24,6 @@ app.use(cors({
 }));
 
 
-app.post('/login', async (req, res) => {
-  const { studentnumber, password } = req.body;
-
-  db.query(
-    `SELECT * , c.description as levels FROM account INNER JOIN department ON account.DEPARTMENT = department.department_id INNER JOIN level c ON c.level_id =account.CLASSES INNER join user_type on account.USERTYPE=user_type.user_type_id WHERE studentnumber = ?`
-    [studentnumber],
-    async (err, results) => {
-      if (err)
-        return res.status(500).json({ message: 'Database error', error: err });
-
-      if (results.length === 0) {
-        return res.status(401).json({ message: 'Invalid student number or password' });
-      }
-
-      const user = results[0];
-
-      if (!user.PASSWORD) {
-        return res.status(500).json({ message: 'Password field missing for this account' });
-      }
-
-      try {
-        const isMatch = await bcrypt.compare(password, user.PASSWORD);
-        if (!isMatch) {
-          return res.status(401).json({ message: 'Invalid student number or password' });
-        }
-
-        //Build a "safe" user object (exclude password hash)
-        const userDetails = {
-          id: user.ID,
-          email: user.EMAIL,
-          usertype: user.USERTYPE,
-          studentnumber: user.studentnumber,
-          fullname: user.FULLNAME,
-          classes: user.CLASSES,
-          tel: user.TEL,
-          department_id: user.department_id,
-          department_name: user.department_name, // <-- you had just department_name before
-          description:user.description,
-          type_name:user.type_name,
-          levels:user.levels
-        };
-
-        // Create JWT with limited lifespan
-        const token = jwt.sign(userDetails, JWT_SECRET, { expiresIn: '1h' });
-
-        //Send HTTP-only cookie for cross-site
-        res.cookie('token', token, {
-          httpOnly: true,
-          secure: true,      // true on production (HTTPS); false for local dev
-          sameSite: 'none',  // required for cross-site cookie
-          maxAge:60 * 60 * 1000 // 1 hour
-        });
-
-        // ✅ Return user details (no password)
-        res.json({
-          message:'Logged in successfully',
-          user: userDetails
-        });
-
-      } catch (error) {
-        console.error('Bcrypt compare error:', error);
-        res.status(500).json({ message: 'Error verifying password' });
-      }
-    }
-  );
-});
 
 
 // Test route
@@ -108,6 +42,82 @@ function authenticateToken(req, res, next) {
     next();
   });
 }
+
+// login
+
+
+app.post('/login', async (req, res) => {
+  const { studentnumber, password } = req.body;
+
+  db.query(
+    `SELECT account.*, 
+            c.description as levels,
+            department.department_name,
+            user_type.type_name,
+            user_type.description as user_type_description
+     FROM account
+     INNER JOIN department ON account.DEPARTMENT = department.department_id
+     INNER JOIN level c ON c.level_id = account.CLASSES
+     INNER JOIN user_type ON account.USERTYPE = user_type.user_type_id
+     WHERE account.studentnumber = ?`,
+    [studentnumber],  // ✅ parameters array
+    async (err, results) => {
+      if (err) {
+        console.error('DB error:', err);
+        return res.status(500).json({ message: 'Database error', error: err });
+      }
+
+      if (results.length === 0) {
+        return res.status(401).json({ message: 'Invalid student number or password' });
+      }
+
+      const user = results[0];
+
+      if (!user.PASSWORD) {
+        return res.status(500).json({ message: 'Password field missing for this account' });
+      }
+
+      try {
+        const isMatch = await bcrypt.compare(password, user.PASSWORD);
+        if (!isMatch) {
+          return res.status(401).json({ message: 'Invalid student number or password' });
+        }
+
+        const userDetails = {
+          id: user.ID,
+          email: user.EMAIL,
+          usertype: user.USERTYPE,
+          studentnumber: user.studentnumber,
+          fullname: user.FULLNAME,
+          classes: user.CLASSES,
+          tel: user.TEL,
+          department_id: user.department_id,
+          department_name: user.department_name,
+          type_name: user.type_name,
+          levels: user.levels
+        };
+
+        const token = jwt.sign(userDetails, JWT_SECRET, { expiresIn: '1h' });
+
+        res.cookie('token', token, {
+          httpOnly: true,
+          secure: true,      // true on production HTTPS
+          sameSite: 'none',
+          maxAge: 60 * 60 * 1000
+        });
+
+        res.json({
+          message: 'Logged in successfully',
+          user: userDetails
+        });
+
+      } catch (error) {
+        console.error('Bcrypt compare error:', error);
+        res.status(500).json({ message: 'Error verifying password' });
+      }
+    }
+  );
+});
  //get all menue
 app.get('/api/menu',authenticateToken, (req, res) => {
   const sql = 'SELECT * FROM menu_items';
@@ -1106,5 +1116,5 @@ const io = new Server(server, {
 
 
   server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`http://localhost:${PORT}`);
 });
