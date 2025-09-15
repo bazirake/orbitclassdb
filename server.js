@@ -28,7 +28,7 @@ app.post('/login', async (req, res) => {
   const { studentnumber, password } = req.body;
 
   db.query(
-    `SELECT * ,c.description as levels FROM account INNER JOIN department ON account.DEPARTMENT = department.department_id INNER JOIN level c ON c.level_id =account.CLASSES INNER join user_type on account.USERTYPE=user_type.user_type_id WHERE studentnumber = ?`
+    `SELECT * , c.description as levels FROM account INNER JOIN department ON account.DEPARTMENT = department.department_id INNER JOIN level c ON c.level_id =account.CLASSES INNER join user_type on account.USERTYPE=user_type.user_type_id WHERE studentnumber = ?`
     [studentnumber],
     async (err, results) => {
       if (err)
