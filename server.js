@@ -19,7 +19,7 @@ app.use(bodyParser.json());
 app.use(express.json());
 // Enable CORS with credentials
 app.use(cors({
-    origin:'http://localhost:3000', // your frontend URL
+    origin:'https://orbitclass.vercel.app', // your frontend URL
     credentials:true // allow cookies
 }));
 
