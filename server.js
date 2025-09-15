@@ -948,13 +948,13 @@ app.post('/api/user-type', (req, res) => {
 
 
 app.post('/api/department', (req, res) => {
-    const { department_name, description } = req.body;
+    const { department_name} = req.body;
 
     if (!department_name) {
         return res.status(400).json({ error: 'department_name is required' });
     }
-    const sql = 'INSERT INTO department (department_name, description) VALUES (?, ?)';
-    db.query(sql, [department_name, description || null], (err, result) => {
+    const sql = 'INSERT INTO department (department_name) VALUES (?)';
+    db.query(sql, [department_name|| null], (err, result) => {
         if (err) {
             console.error(err);
             return res.status(500).json({ error: 'Database error' });
