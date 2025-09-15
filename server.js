@@ -995,7 +995,7 @@ app.post('/api/level', (req, res) => {
 
 // API to get all levels
 app.get('/levels', (req, res) => {
-    const sql = 'SELECT * FROM Level';
+    const sql = 'SELECT * FROM level';
     db.query(sql, (err, results) => {
         if (err) {
             console.error(err);
