@@ -1104,6 +1104,7 @@ const io = new Server(server, {
      });
 });
 
-server.listen(() => {
-  console.log(`🚀 Server running on port`);
+
+  server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
