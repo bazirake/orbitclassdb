@@ -1115,6 +1115,6 @@ const io = new Server(server, {
 });
 
 
-  server.listen(PORT, () => {
-  console.log(`http://localhost:${PORT}`);
+  server.listen( () => {
+  console.log(`server has been connected`);
 });
