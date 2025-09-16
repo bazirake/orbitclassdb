@@ -52,6 +52,7 @@ app.use(express.json());
 });
 app.listen(port, () => {
   console.log(`http://localhost:${port}`)
+  console.log("welcome")
 })
 
 
