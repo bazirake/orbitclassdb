@@ -10,7 +10,7 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app); // now http is defined
 const cookieParser = require('cookie-parser');
-const PORT = 3001;
+const port = process.env.PORT || 4000 
 const JWT_SECRET ='bazirake';
     // Node HTTP server
 app.use(cookieParser()); 
@@ -30,6 +30,10 @@ app.use(cors({
  app.get('/', (req, res) => {
     res.send(`https://orbitclassdb.onrender.com`);  // Corrected URL
 });
+
+app.listen(port, () => {
+  console.log(`http://localhost: ${port}`)
+})
 
 //JWT Authentication Middleware
 function authenticateToken(req, res, next) {
@@ -1115,6 +1119,6 @@ const io = new Server(server, {
 });
 
 
-  server.listen( () => {
-  console.log(`server has been connected`);
-});
+//   server.listen(port, () => {
+//   console.log(`Server is running on port ${port}`);
+// });
