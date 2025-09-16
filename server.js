@@ -15,13 +15,33 @@ const JWT_SECRET ='bazirake';
     // Node HTTP server
 app.use(cookieParser()); 
 // Middleware
+const allowedOrigins = [
+  'https://orbitclass.vercel.app', // production
+  'http://localhost:3000',         // development
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // allow requests with no origin (mobile apps, curl)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true, // if you need cookies or auth headers
+}));
+
+
 app.use(bodyParser.json());
 app.use(express.json());
 // Enable CORS with credentials
-app.use(cors({
-    origin:'https://orbitclass.vercel.app', // your frontend URL
-    credentials:true // allow cookies
-}));
+// app.use(cors({
+//     origin:allowedOrigins, // your frontend URL
+//     credentials:true // allow cookies
+// }));
 
 
 
