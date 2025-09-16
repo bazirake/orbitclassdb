@@ -28,12 +28,13 @@ app.use(cors({
 
 // Test route
  app.get('/', (req, res) => {
-    res.send(`https://orbitclassdb.onrender.com`);  // Corrected URL
+    res.send(`welcome to render api`);  // Corrected URL
 });
-
 app.listen(port, () => {
   console.log(`http://localhost:${port}`)
 })
+
+
 
 //JWT Authentication Middleware
 function authenticateToken(req, res, next) {
@@ -1021,7 +1022,7 @@ app.get('/levels', (req, res) => {
 
 // GET all departments
 app.get('/departments', (req, res) => {
-    const sql = 'SELECT * FROM `department` INNER JOIN level l on department_id=l.deptid';
+    const sql = 'SELECT * FROM `department';
     db.query(sql, (err, results) => {
         if (err) {
             console.error(err);
