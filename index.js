@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http'); // ✅ declare before using
 const { Server } = require('socket.io');
 const bodyParser = require('body-parser');
+const mysql = require('mysql2/promise'); // Promise-based MySQL
 const bcrypt = require('bcrypt');
 const db = require('./db');
 const jwt = require('jsonwebtoken');
@@ -15,7 +16,7 @@ const JWT_SECRET ='bazirake';
     // Node HTTP server
 app.use(cookieParser()); 
 // Middleware
-const allowedOrigins = [
+ const allowedOrigins = [
   'https://orbitclass.vercel.app', // production
   'http://localhost:3000',         // development
 ];
@@ -34,6 +35,15 @@ app.use(cors({
   credentials: true, // if you need cookies or auth headers
 }));
 
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'root',
+    database: 'orbitdb',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
 
 app.use(bodyParser.json());
 app.use(express.json());
@@ -47,15 +57,13 @@ app.use(express.json());
 
 
 // Test route
- app.get('/', (req, res) => {
-    res.send(`welcome to render api`);  // Corrected URL
-});
-app.listen(port, () => {
-  console.log(`http://localhost:${port}`)
-  console.log("welcome")
-})
 
+// app.listen(port, () => {
+//   console.log(`http://localhost:${port}`)
+//   console.log("welcome")
+// })
 
+ 
 
 //JWT Authentication Middleware
 function authenticateToken(req, res, next) {
@@ -85,29 +93,28 @@ app.post('/login', async (req, res) => {
      INNER JOIN department ON account.DEPARTMENT = department.department_id
      INNER JOIN level c ON c.level_id = account.CLASSES
      INNER JOIN user_type ON account.USERTYPE = user_type.user_type_id
-     WHERE account.studentnumber = ?`,
-    [studentnumber],  // ✅ parameters array
-    async (err, results) => {
-      if (err) {
+     WHERE account.studentnumber = ? AND account.PASSWORD=?`,
+    [studentnumber,password],  // ✅ parameters array
+    async (err,results) => {
+      if(err) {
         console.error('DB error:', err);
         return res.status(500).json({ message: 'Database error', error: err });
       }
 
-      if (results.length === 0) {
+      if(results.length === 0) {
         return res.status(401).json({ message: 'Invalid student number or password' });
       }
 
       const user = results[0];
 
-      if (!user.PASSWORD) {
-        return res.status(500).json({ message: 'Password field missing for this account' });
-      }
-
-      try {
-        const isMatch = await bcrypt.compare(password, user.PASSWORD);
-        if (!isMatch) {
-          return res.status(401).json({ message: 'Invalid student number or password' });
-        }
+      // if (!user.PASSWORD) {
+      //   return res.status(500).json({ message: 'Password field missing for this account' });
+      // }
+      // try {
+      //   const isMatch = await bcrypt.compare(password, user.PASSWORD);
+      //   if (!isMatch) {
+      //     return res.status(401).json({ message: 'Invalid student number or password' });
+      //   }
 
         const userDetails = {
           id: user.ID,
@@ -124,8 +131,7 @@ app.post('/login', async (req, res) => {
         };
 
         const token = jwt.sign(userDetails, JWT_SECRET, { expiresIn: '1h' });
-
-        res.cookie('token', token, {
+        res.cookie('token',token,{
           httpOnly: true,
           secure: true,      // true on production HTTPS
           sameSite: 'none',
@@ -136,11 +142,6 @@ app.post('/login', async (req, res) => {
           message: 'Logged in successfully',
           user: userDetails
         });
-
-      } catch (error) {
-        console.error('Bcrypt compare error:', error);
-        res.status(500).json({ message: 'Error verifying password' });
-      }
     }
   );
 });
@@ -361,12 +362,12 @@ app.post('/createaccount', async (req, res) => {
     try {
         const { fullname, department, classes, studentnumber, email, password, usertype, tel } = req.body;
         // hash password before storing
-        const hashedPassword = await bcrypt.hash(password, 10);
+       // const hashedPassword = await bcrypt.hash(password, 10);
         db.query(
             `INSERT INTO account
             (fullname,department,classes,studentnumber,email,password,usertype,tel) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [fullname, department, classes, studentnumber, email, hashedPassword, usertype, tel],
+            [fullname, department, classes, studentnumber, email, password, usertype, tel],
             (err, results) => {
                 if(err) return res.status(500).send(err);
                 res.json({ 
@@ -1043,7 +1044,7 @@ app.get('/levels', (req, res) => {
 
 // GET all departments
 app.get('/departments', (req, res) => {
-    const sql = 'SELECT * FROM `department';
+    const sql = 'SELECT * FROM `department` INNER JOIN level l on department_id=l.deptid';
     db.query(sql, (err, results) => {
         if (err) {
             console.error(err);
@@ -1052,6 +1053,174 @@ app.get('/departments', (req, res) => {
         res.status(200).json({results });
     });
 });
+
+// GET /departments
+app.get('/department', (req, res) => {
+  const sql = "SELECT department_id, department_name, created_at FROM department";
+  
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: 'Database query failed' });
+    }
+    res.json(results);
+  });
+});
+
+// GET API to fetch semesters
+app.get('/semesters', (req, res) => {
+  const query = `
+    SELECT 
+      semester_id, 
+      semester_name, 
+      academic_year, 
+      start_date, 
+      end_date, 
+      status, 
+      created_at, 
+      updated_at 
+    FROM semester
+  `;
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching semesters:', err);
+      return res.status(500).json({ error: 'Database query error' });
+    }
+    res.json(results);
+  });
+});
+
+
+// GET API to fetch instructors
+app.get('/instructors', (req, res) => {
+  const query = `
+    SELECT 
+      instructor_id,
+      first_name,
+      last_name,
+      email,
+      phone,
+      hire_date,
+      department_id,
+      specialization,
+      status,
+      created_at,
+      updated_at
+    FROM instructor
+  `;
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching instructors:', err);
+      return res.status(500).json({ error: 'Database query error' });
+    }
+    res.json(results);
+  });
+});
+
+
+// GET API to fetch courses
+app.get('/api/courses', (req, res) => {
+  const query = `
+    SELECT 
+      course_id,
+      course_code,
+      course_name,
+      description,
+      credit_hours,
+      level_id,
+      department_id,
+      created_at,
+      updated_at
+    FROM course
+  `;
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching courses:', err);
+      return res.status(500).json({ error: 'Database query error' });
+    }
+    res.json(results);
+  });
+});
+
+// GET API to fetch days
+app.get('/api/days', (req, res) => {
+  const query = `
+    SELECT 
+      day_id, 
+      day_name
+    FROM days
+  `;
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching days:', err);
+      return res.status(500).json({ error: 'Database query error' });
+    }
+    res.json(results);
+  });
+});
+
+
+app.get('/timetable-types', (req, res) => {
+  const query = 'SELECT * FROM timetable_type';
+  db.query(query, (err, results) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(results);
+  });
+});
+
+// POST endpoint to insert a new timetable row
+app.post('/createtimetable', (req,res) => {
+  const {
+    course_id,
+    instructor_id,
+    day_id,
+    room,
+    start_time,
+    end_time,
+    semester,
+    academic_year,
+    level_id,
+    deptid,
+    typeid,
+    timerange
+  } = req.body;
+
+  const sql = `
+    INSERT INTO atimetable
+    (course_id, instructor_id, day_id, room, start_time, end_time, semester, academic_year,level_id,deptid,typeid,timerange)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?) `;
+
+  const values=[
+    course_id,
+    instructor_id,
+    day_id,
+    room,
+    start_time,
+    end_time,
+    semester,
+    academic_year,
+    level_id,
+    deptid,
+    typeid,
+    `${start_time}-${end_time}`
+  ];
+
+  db.query(sql, values, (err, result) => {
+    if (err) {
+      console.error('Error inserting timetable:', err);
+      return res.status(500).json({ error:'Database error' });
+    }
+    res.status(200).json({ message:'Timetable created successfully'});
+  });
+});
+
+
 //get all user types
 app.get('/user-types', (req, res) => {
     const sql = 'SELECT * FROM user_type';
@@ -1086,6 +1255,241 @@ app.get('/api/department/:id', (req, res) => {
   });
 });
 
+
+// Route to get timetable
+app.get('/timetables', async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                t.timerange,
+                lvl.description as level,
+                dept.department_name,
+                sem.semester_name,
+
+                MAX(CASE WHEN d.day_name = 'Monday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Monday,
+
+                MAX(CASE WHEN d.day_name = 'Tuesday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Tuesday,
+
+                MAX(CASE WHEN d.day_name = 'Wednesday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Wednesday,
+
+                MAX(CASE WHEN d.day_name = 'Thursday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Thursday,
+
+                MAX(CASE WHEN d.day_name = 'Friday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Friday,
+
+                MAX(CASE WHEN d.day_name = 'Saturday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Saturday,
+
+                MAX(CASE WHEN d.day_name = 'Sunday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Sunday
+
+            FROM atimetable t
+            JOIN days d 
+                ON t.day_id = d.day_id
+            LEFT JOIN course c 
+                ON t.course_id = c.course_id
+            LEFT JOIN instructor i 
+                ON t.instructor_id = i.instructor_id
+            LEFT JOIN level lvl
+                ON t.level_id = lvl.level_id
+            LEFT JOIN department dept
+                ON t.deptid = dept.department_id
+            LEFT JOIN semester sem
+                ON t.semester = sem.semester_id
+            LEFT JOIN timetable_type tt
+                ON t.typeid = tt.id
+            GROUP BY t.timerange, lvl.description, dept.department_name, sem.semester_name
+            ORDER BY t.timerange, lvl.description, dept.department_name, sem.semester_name;
+        `;
+
+        // Execute query
+        const [rows] = await pool.query(query); // rows is an array
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching timetable:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
+
+
+// POST /timetables with filters
+app.post('/timetableSearch', async (req, res) => {
+    try {
+        // Destructure filters from request body
+        const { department_id, level_id, day_name, semester_id } = req.body;
+
+        // Build dynamic WHERE conditions
+        let conditions = [];
+        let params = [];
+
+        if (department_id) {
+            conditions.push('t.deptid = ?');
+            params.push(department_id);
+        }
+        if (level_id) {
+            conditions.push('t.level_id = ?');
+            params.push(level_id);
+        }
+        if (day_name) {
+            conditions.push('d.day_name = ?');
+            params.push(day_name);
+        }
+        if (semester_id) {
+            conditions.push('t.semester = ?');
+            params.push(semester_id);
+        }
+        
+        // Combine into WHERE clause
+        const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+        const query = `
+            SELECT 
+                t.timerange,
+                lvl.description as level,
+                dept.department_name,
+                sem.semester_name,
+
+                MAX(CASE WHEN d.day_name = 'Monday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Monday,
+
+                MAX(CASE WHEN d.day_name = 'Tuesday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Tuesday,
+
+                MAX(CASE WHEN d.day_name = 'Wednesday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Wednesday,
+
+                MAX(CASE WHEN d.day_name = 'Thursday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Thursday,
+
+                MAX(CASE WHEN d.day_name = 'Friday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Friday,
+
+                MAX(CASE WHEN d.day_name = 'Saturday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Saturday,
+
+                MAX(CASE WHEN d.day_name = 'Sunday' 
+                    THEN COALESCE(
+                        CONCAT(
+                          c.course_name, 
+                          ' (', t.room, ' – ', i.first_name, ' ', i.last_name, ')'
+                        ),
+                        tt.type_name
+                    ) END) AS Sunday
+
+            FROM atimetable t
+            JOIN days d 
+                ON t.day_id = d.day_id
+            LEFT JOIN course c 
+                ON t.course_id = c.course_id
+            LEFT JOIN instructor i 
+                ON t.instructor_id = i.instructor_id
+            LEFT JOIN level lvl
+                ON t.level_id = lvl.level_id
+            LEFT JOIN department dept
+                ON t.deptid = dept.department_id
+            LEFT JOIN semester sem
+                ON t.semester = sem.semester_id
+            LEFT JOIN timetable_type tt
+                ON t.typeid = tt.id
+            ${whereClause}
+            GROUP BY t.timerange, lvl.description, dept.department_name, sem.semester_name
+            ORDER BY t.timerange, lvl.description, dept.department_name, sem.semester_name;
+        `;
+
+        const [rows] = await pool.query(query, params);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching timetable:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
+
 // Start server
 // app.listen(PORT, () => {
 //     console.log(`Server is running on http://localhost:${PORT}`);
@@ -1093,14 +1497,14 @@ app.get('/api/department/:id', (req, res) => {
 
 // Initialize Socket.IO
 const io = new Server(server, {
-  cors: {
-    origin:'https://orbitclass.vercel.app',
+  cors:{
+    origin:'http://localhost:3000',
     methods:['GET','POST'],
   },
 });
 
     io.on("connection",(socket) => {
-    console.log("🔌User connected  to app:", socket.id);
+    console.log("🔌User connected  to app:",socket.id);
     socket.emit("myid",socket.id);
 
     // Handle room joining
@@ -1120,15 +1524,15 @@ const io = new Server(server, {
     //  socket.to(msg.room).emit("sendback",msg);//broadcast to everyone
     //  });
       // create room
-     socket.on("createRoom",(roomName) =>{
+      socket.on("createRoom",(roomName) =>{
        //const newRoom = { id: Date.now(), name: roomName };
        //rooms.push(newRoom);
        socket.join(roomName);
-      console.log(`Socket ${socket.id} joined room ${roomName}`);
-       //io.emit("send", rooms); // broadcast updated rooms
+       console.log(`Socket ${socket.id} joined room ${roomName}`);
+        io.emit("checking",{sockets:socket.id,room:roomName}); // broadcast updated rooms
       });
 
-        // Handle room joining
+           //Handle room joining
       socket.on("sendmessage",(msg) =>{
       console.log("Server received message from app:",msg);
       io.to(msg.room).emit("sendback",msg)
@@ -1141,6 +1545,22 @@ const io = new Server(server, {
 });
 
 
-//   server.listen(port, () => {
-//   console.log(`Server is running on port ${port}`);
+
+app.get('/', (req, res) => {
+  res.send('Server is running');
+});
+
+
+// app.get('/', (req, res) => {
+//     res.send(`welcome to render api`);  // Corrected URL
+// });
+
+server.listen(3001,() =>{
+  console.log('Server listening on http://localhost:3001');
+});
+
+
+
+// .listen( () => {
+//    console.log(`Server is running on port`);
 // });
