@@ -1,4 +1,8 @@
-const express = require('express');
+const express =require('express');
+const nodemailer =require('nodemailer');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
 const http = require('http'); // ✅ declare before using
 const { Server } = require('socket.io');
 const bodyParser = require('body-parser');
@@ -21,6 +25,7 @@ app.use(cookieParser());
   'http://localhost:3000',         // development
 ];
 
+
 app.use(cors({
   origin: function (origin, callback) {
     // allow requests with no origin (mobile apps, curl)
@@ -34,6 +39,25 @@ app.use(cors({
   },
   credentials: true, // if you need cookies or auth headers
 }));
+// Important for parsing non-file fields
+app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static('uploads'));
+
+// configure storage
+// const storage = multer.diskStorage({
+//   destination: (req, file, cb) => cb(null, 'uploads/'),
+//   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+// });
+
+// ✅ Ensure 'uploads' folder exists
+fs.mkdirSync('uploads', { recursive: true });
+
+// ✅ Configure multer storage
+const storage =multer.diskStorage({
+  destination:(req, file, cb)=>cb(null, 'uploads/'),
+  filename:(req, file, cb)=>cb(null, Date.now() + '-' + file.originalname)
+});
+const upload = multer({ storage });
 
 const pool = mysql.createPool({
     host: 'localhost',
@@ -88,10 +112,12 @@ app.post('/login', async (req, res) => {
             c.description as levels,
             department.department_name,
             user_type.type_name,
-            user_type.description as user_type_description
+            user_type.description as user_type_description,
+            c.level_id,
+            department.department_id
      FROM account
      INNER JOIN department ON account.DEPARTMENT = department.department_id
-     INNER JOIN level c ON c.level_id = account.CLASSES
+      LEFT JOIN level c ON c.level_id = account.CLASSES
      INNER JOIN user_type ON account.USERTYPE = user_type.user_type_id
      WHERE account.studentnumber = ? AND account.PASSWORD=?`,
     [studentnumber,password],  // ✅ parameters array
@@ -127,7 +153,8 @@ app.post('/login', async (req, res) => {
           department_id: user.department_id,
           department_name: user.department_name,
           type_name: user.type_name,
-          levels: user.levels
+          levels: user.levels,
+          level_id:user.level_id
         };
 
         const token = jwt.sign(userDetails, JWT_SECRET, { expiresIn: '1h' });
@@ -135,7 +162,7 @@ app.post('/login', async (req, res) => {
           httpOnly: true,
           secure: true,      // true on production HTTPS
           sameSite: 'none',
-          maxAge: 60 * 60 * 1000
+          maxAge: 60 * 60 * 60 * 1000
         });
 
         res.json({
@@ -164,10 +191,10 @@ app.get('/api/menu',authenticateToken, (req, res) => {
 //get menu by userty
 app.get('/api/menus',authenticateToken,(req, res) => {
   const usertype =req.query.usertype;// ?usertype=admin
-  let sql = 'SELECT * FROM menu_items';
+  let sql = 'SELECT i.id,i.label,i.href,i.icon,i.usertype FROM menu_items i INNER JOIN menuaccount a on i.id=a.menuid';
   let params = [];
   if (usertype) {
-    sql +=' WHERE usertype= ?';
+    sql +=' WHERE a.usertypeid=?';
     params.push(usertype);
   }
   db.query(sql,params,(err, results) => {
@@ -175,6 +202,29 @@ app.get('/api/menus',authenticateToken,(req, res) => {
         res.json({
        results
     });
+  });
+});
+
+
+
+
+// API endpoint
+app.get("/menu/:usertypeid", (req, res) => {
+  const usertypeid = req.params.usertypeid;
+
+  const sql = `
+    SELECT i.id, i.label, i.href, i.icon, i.usertype
+    FROM menu_items i
+    INNER JOIN menuaccount a ON i.id = a.menuid
+    WHERE a.usertypeid = ?
+  `;
+
+  db.query(sql, [usertypeid], (err, results) => {
+    if (err) {
+      console.error("Error executing query:", err);
+      return res.status(500).json({ error: "Database query failed" });
+    }
+    res.json(results);
   });
 });
 
@@ -1125,7 +1175,6 @@ app.get('/api/courses', (req, res) => {
   const query = `
     SELECT 
       course_id,
-      course_code,
       course_name,
       description,
       credit_hours,
@@ -1358,8 +1407,6 @@ app.get('/timetables', async (req, res) => {
 });
 
 
-
-
 // POST /timetables with filters
 app.post('/timetableSearch', async (req, res) => {
     try {
@@ -1386,7 +1433,7 @@ app.post('/timetableSearch', async (req, res) => {
             conditions.push('t.semester = ?');
             params.push(semester_id);
         }
-        
+
         // Combine into WHERE clause
         const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
@@ -1488,6 +1535,1130 @@ app.post('/timetableSearch', async (req, res) => {
     }
 });
 
+// POST /quizzes - Create a new quiz
+ app.post('/preparequizze', async (req, res) => {
+  try {
+    const {
+      quiz_title,
+      quiz_description,
+      department_id,
+      level_id,
+      course_id,
+      prepared_by,
+      total_marks,
+      duration,
+      deadline
+    } = req.body;
+
+    // Basic validation
+    if (!quiz_title || !prepared_by) {
+      return res.status(400).json({ message: 'quiz_title and prepared_by are required.' });
+    }
+
+    // SQL Insert
+    const sql = `
+      INSERT INTO quizzes
+      (quiz_title, quiz_description, department_id, level_id, course_id, prepared_by, total_marks,duration,deadline)
+      VALUES (?, ?, ?, ?, ?, ?, ?,?,?)`;
+
+    const values = [
+      quiz_title,
+      quiz_description,
+      department_id,
+      level_id,
+      course_id,
+      prepared_by,
+      total_marks,
+      duration,
+      deadline
+    ];
+
+    // Execute the query (use your pool or db connection)
+    const [result] = await pool.query(sql, values);
+
+    res.status(201).json({
+      message: 'Quiz created successfully',
+      quiz_id: result.insertId // use insertId from result
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
+
+// POST /api/quiz-questions
+ app.post('/quiz-questions', async (req,res) => {
+  try {
+    const { quiz_id, question_text, marks } = req.body;
+
+    // Basic validation
+    if (!quiz_id || !question_text || marks === undefined) {
+      return res.status(400).json({ message: 'quiz_id, question_text, and marks are required.' });
+    }
+
+    // SQL Insert
+    const sql = `
+      INSERT INTO quiz_questions (quiz_id, question_text, marks)
+      VALUES (?, ?, ?)
+    `;
+    const values = [quiz_id, question_text, marks];
+    const [result] = await pool.query(sql, values);
+    res.status(201).json({
+        message:'Question created successfully',
+        question_id:result.insertId
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
+
+
+
+// GET /api/quizzes?prepared_by=24
+app.get('/quizzes', async (req,res) => {
+  try {
+    const quiz_id = parseInt(req.query.quiz_id);
+    if (!quiz_id) {
+      return res.status(400).json({ message: 'prepared_by query parameter is required and must be a number.' });
+    }
+
+    const sql = `
+      SELECT quiz_id, quiz_title 
+      FROM quizzes 
+      WHERE quiz_id = ?`;
+    const [rows] = await pool.query(sql, [quiz_id]);
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
+// POST /api/question-options
+   app.post('/question-options', async (req, res) =>{
+      try{
+
+     const {question_id,option_text, is_correct}=req.body 
+     // Validation
+     if(!question_id || !option_text) {
+        return res.status(400).json({message:'question_id and option_text are required.'});
+      }
+
+    // Convert boolean to 0/1 if needed
+    const correctValue = is_correct ? 1 : 0;
+
+    // SQL Insert
+    const sql = `
+      INSERT INTO question_options(question_id,option_text,is_correct)
+      VALUES (?,?,?) `;
+    const values = [question_id, option_text,correctValue];
+    const [result] = await pool.query(sql,values);
+
+    res.status(201).json({
+      message:'Question option created successfully',
+      option_id:result.insertId
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
+
+// GET /api/quiz-questions/:id
+app.get('/quiz-questions/:id', async (req, res) => {
+  try {
+    const questionId = parseInt(req.params.id);
+
+    if (!questionId) {
+      return res.status(400).json({ message: 'Valid question_id is required.' });
+    }
+
+    const sql = `
+      SELECT question_id, question_text
+      FROM quiz_questions
+      WHERE question_id = ?
+    `;
+
+    const [rows] = await pool.query(sql, [questionId]);
+
+    if ((rows).length === 0) {
+      return res.status(404).json({ message: 'Question not found.' });
+    }
+
+    res.json(rows[0]); // return single row
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
+
+app.get('/api/quiz-questions', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        qq.question_id,
+        qq.quiz_id,
+        qq.question_text,
+        op.option_id,
+        op.option_text,
+        op.is_correct
+      FROM quiz_questions qq
+      INNER JOIN question_options op 
+        ON qq.question_id = op.question_id
+      ORDER BY qq.question_id, op.option_id
+    `);
+
+    // Group by question_id
+    const result = {};
+    rows.forEach(row =>{
+      if (!result[row.question_id]) {
+        result[row.question_id] = {
+          question_id: row.question_id,
+          quiz_id: row.quiz_id,
+          question_text: row.question_text,
+          options: []
+        };
+      }
+      result[row.question_id].options.push({
+        option_id: row.option_id,
+        option_text: row.option_text,
+        is_correct: row.is_correct
+      });
+    });
+
+    res.json(Object.values(result));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+
+// --- API route to list quizzes + questions + options filtered by department_id & level_id ---
+// app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
+//   const { department_id, level_id } = req.params;
+
+//   try {
+//     const [rows] = await pool.query(
+//       `
+//       SELECT 
+//         q.quiz_title,
+//         q.quiz_description,
+//         q.total_marks,
+//         qq.question_id,
+//         qq.marks,
+//         qq.quiz_id,
+//         qq.question_text,
+//         op.option_id,
+//         op.option_text,
+//         op.is_correct
+//       FROM quiz_questions qq
+//       INNER JOIN question_options op 
+//         ON qq.question_id = op.question_id
+//       INNER JOIN quizzes q 
+//         ON qq.quiz_id = q.quiz_id
+//       WHERE q.department_id = ? AND q.level_id = ?
+//       ORDER BY qq.question_id, op.option_id, q.created_at DESC
+//       `,
+//       [department_id, level_id]
+//     );
+
+//     // Group by quiz -> question -> options
+//     const quizzesMap = {};
+//     rows.forEach(row => {
+//       const quizKey = row.quiz_id;
+//       // --- ensure quiz exists ---
+//       if (!quizzesMap[quizKey]) {
+//         quizzesMap[quizKey] = {
+//           quiz_id: row.quiz_id,
+//           quiz_title: row.quiz_title,
+//           quiz_description: row.quiz_description,
+//           total_marks:row.total_marks,
+//           questions: {}
+//         };
+//       }
+
+//       // --- ensure question exists inside this quiz ---
+//       if (!quizzesMap[quizKey].questions[row.question_id]) {
+//         quizzesMap[quizKey].questions[row.question_id] = {
+//           question_id: row.question_id,
+//           question_text: row.question_text,
+//           marks:row.marks,
+//           options: []
+//         };
+//       }
+
+//       // --- push option ---
+//       quizzesMap[quizKey].questions[row.question_id].options.push({
+//         option_id: row.option_id,
+//         option_text: row.option_text,
+//         is_correct: row.is_correct
+//       });
+//     });
+
+//     // Convert nested object to array
+//     const quizzesArray = Object.values(quizzesMap).map(quiz => ({
+//       quiz_id: quiz.quiz_id,
+//       quiz_title: quiz.quiz_title,
+//       quiz_description: quiz.quiz_description,
+//       total_marks:quiz.total_marks,
+//       questions: Object.values(quiz.questions)
+//     }));
+
+//     res.json(quizzesArray);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
+
+
+app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
+  const { department_id, level_id } = req.params;
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT 
+        q.quiz_title,
+        q.quiz_description,
+        q.total_marks,
+        q.deadline,
+        qq.question_id,
+        qq.marks,
+        qq.quiz_id,
+        qq.question_text,
+        op.option_id,
+        op.option_text,
+        op.is_correct
+      FROM quiz_questions qq
+      INNER JOIN question_options op 
+        ON qq.question_id = op.question_id
+      INNER JOIN quizzes q 
+        ON qq.quiz_id = q.quiz_id
+      WHERE q.department_id = ? AND q.level_id = ?
+      ORDER BY qq.question_id, op.option_id, q.created_at DESC
+      `,
+      [department_id, level_id]
+    );
+
+    // Group by quiz -> question -> options
+    const quizzesMap = {};
+    rows.forEach(row => {
+      const quizKey = row.quiz_id;
+
+      if (!quizzesMap[quizKey]) {
+        quizzesMap[quizKey] = {
+          quiz_id: row.quiz_id,
+          quiz_title: row.quiz_title,
+          quiz_description: row.quiz_description,
+          total_marks: row.total_marks,
+          deadline: row.deadline, // new
+          questions: {}
+        };
+      }
+
+      if (!quizzesMap[quizKey].questions[row.question_id]) {
+        quizzesMap[quizKey].questions[row.question_id] = {
+          question_id: row.question_id,
+          question_text: row.question_text,
+          marks: row.marks,
+          options: []
+        };
+      }
+
+      quizzesMap[quizKey].questions[row.question_id].options.push({
+        option_id: row.option_id,
+        option_text: row.option_text,
+        is_correct: row.is_correct
+      });
+    });
+
+    // Convert nested object to array
+    const quizzesArray = Object.values(quizzesMap).map(quiz => ({
+      quiz_id: quiz.quiz_id,
+      quiz_title: quiz.quiz_title,
+      quiz_description: quiz.quiz_description,
+      total_marks: quiz.total_marks,
+      deadline: quiz.deadline, // new
+      questions: Object.values(quiz.questions)
+    }));
+
+    res.json(quizzesArray);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+
+// Endpoint to filter students
+app.get('/students', (req, res) => {
+  const { department, studentnumber, level } = req.query;
+
+  // Base SQL
+  let sql = `
+    SELECT 
+      A.FULLNAME,
+      D.department_name,
+      L.description AS level_description,
+      A.STUDENTNUMBER,
+      A.TEL,
+      A.EMAIL
+    FROM account A
+    INNER JOIN DEPARTMENT D ON A.DEPARTMENT = D.department_id
+    INNER JOIN level L ON A.CLASSES = L.level_id
+    WHERE 1=1`;
+
+  const params = [];
+  // Add filters dynamically if provided
+  if (department) {
+    sql += ' AND D.department_id = ?';
+    params.push(department);
+  }
+  if (studentnumber) {
+    sql += ' AND A.STUDENTNUMBER = ?';
+    params.push(studentnumber);
+  }
+ 
+  if (level) {
+    sql += ' AND L.level_id = ?';
+    params.push(level);
+  }
+  db.query(sql, params, (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).send('Server Error');
+    }
+    res.json(results);
+  });
+});
+
+
+
+//quiz dealine
+app.get('/api/quiz/:quiz_id/deadline', async (req, res) => {
+  const { quiz_id } = req.params;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT quiz_id, quiz_title, quiz_description, department_id, level_id, course_id,
+              prepared_by, created_at, duration, deadline, total_marks
+       FROM quizzes
+       WHERE quiz_id = ?`,
+      [quiz_id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Quiz not found' });
+    }
+
+    const quiz = rows[0];
+
+    // Compare deadline with current time
+    const now = new Date();
+    const deadline = new Date(quiz.deadline); // assuming deadline is DATETIME in DB
+    const isDeadlineOver = deadline.getTime() < now.getTime();
+
+    res.json({
+      quiz_id: quiz.quiz_id,
+      quiz_title: quiz.quiz_title,
+      quiz_description: quiz.quiz_description,
+      total_marks: quiz.total_marks,
+      deadline: quiz.deadline,
+      isDeadlineOver // true if deadline passed
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+// const [rows] = await pool.query('SELECT deadline FROM quizzes WHERE quiz_id=?', [quizId]);
+// const deadline = new Date(rows[0].deadline);
+// if (deadline < new Date()) {
+//   return res.status(403).json({ error: 'Quiz deadline has passed. Cannot submit.' });
+// }
+
+
+app.post('/api/student-answers', async (req, res) => {
+  const answers = req.body; // array of {student_id, quiz_id, question_id, option_id}
+
+  if (answers.length === 0) {
+    return res.status(400).json({ error: 'No answers submitted' });
+  }
+
+  const studentId = answers[0].student_id;
+  const quizId = answers[0].quiz_id;
+
+  try {
+    // Check if already exists
+    const [existing] = await pool.query(
+      'SELECT 1 FROM student_answer WHERE student_id = ? AND quiz_id = ? LIMIT 1',
+      [studentId, quizId]
+    );
+
+    if (existing.length > 0) {
+      return res.status(409).json({ error: 'You already took this quiz. Cannot perform it twice.' });
+    }
+
+    // Insert answers
+    const values = answers.map(a => [
+      a.student_id,
+      a.question_id,
+      a.option_id ?? null,
+      a.quiz_id
+    ]);
+
+    await pool.query(
+      'INSERT INTO student_answer (student_id,question_id,option_id,quiz_id) VALUES ?',
+      [values]
+    );
+
+    res.json({ status: 'ok' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// working performing quiz
+// app.post('/api/student-answers', async (req, res) => {
+//   const answers = req.body; // array of {student_id, quiz_id, question_id, option_id}
+
+//   try {
+//     // Insert all at once (bulk insert)
+//     const values = answers.map(a =>[a.student_id,a.question_id,a.option_id,a.quiz_id]);
+//          await pool.query(
+//          'INSERT INTO student_answer (student_id,question_id,option_id,quiz_id) VALUES ?',
+//          [values]
+//       );
+
+//     res.json({status: 'ok' });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
+
+
+
+
+
+// Assuming Express and a MySQL pool
+app.get('/api/student-result/:studentId/:quizId', async (req, res) => {
+  const { studentId, quizId } = req.params;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT 
+         sa.student_id,
+         qq.quiz_id,
+         SUM(
+           CASE WHEN op.is_correct = 1 THEN qq.marks ELSE 0 END
+         ) AS total_marks_obtained,
+         SUM(qq.marks) AS total_possible_marks
+       FROM student_answer sa
+       INNER JOIN question_options op 
+         ON sa.option_id = op.option_id
+       INNER JOIN quiz_questions qq 
+         ON sa.question_id = qq.question_id
+       WHERE sa.student_id = ? AND qq.quiz_id = ?
+       GROUP BY sa.student_id, qq.quiz_id`,
+      [studentId,quizId]
+    );
+
+    if (rows.length===0){
+       return res.status(404).json({message:'No answers found for this student/quiz'});
+    }
+
+    const result = rows[0];
+    const percentage =
+      (result.total_marks_obtained / result.total_possible_marks) * 100;
+    // Define pass mark threshold (example 50%)
+    const passThreshold = 50;
+    const status = percentage >= passThreshold ? 'Pass' : 'Fail';
+     res.json({
+      student_id:result.student_id,
+      quiz_id:result.quiz_id,
+      total_marks_obtained:result.total_marks_obtained,
+      total_possible_marks:result.total_possible_marks,
+      percentage:percentage.toFixed(2),
+      status,
+     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.get('/api/quiz/:id/duration', async (req, res) => {
+  try {
+    const quizId = req.params.id; // e.g. /api/quiz/2/duration
+
+    // ✅ Use await with pool.query
+    const [rows] = await pool.query(
+      'SELECT duration FROM quizzes WHERE quiz_id = ?',
+      [quizId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Quiz not found' });
+    }
+
+    res.json({ duration: rows[0].duration });
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+app.get('/api/student-results', async (req, res) => {
+  const { department, studentId, studentnumber, course, level } = req.query;
+
+  try {
+    let sql = `
+      SELECT 
+        A.STUDENTNUMBER,
+        A.FULLNAME AS student_name,
+        A.TEL AS student_tel,
+        D.department_name AS department,
+        C.description AS course,
+        QQ.quiz_id,
+        Q.level_id AS level_of_study,
+        SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) AS total_marks_obtained,
+        SUM(QQ.marks) AS total_possible_marks
+      FROM student_answer SA
+      INNER JOIN question_options O ON SA.option_id = O.option_id
+      INNER JOIN quiz_questions QQ ON SA.question_id = QQ.question_id
+      INNER JOIN account A ON SA.student_id = A.ID
+      INNER JOIN department D ON A.DEPARTMENT = D.department_id
+      INNER JOIN quizzes Q ON QQ.quiz_id = Q.quiz_id
+      INNER JOIN course C ON Q.course_id = C.course_id
+      INNER JOIN level L ON Q.level_id = L.level_id
+      WHERE 1=1
+    `;
+
+    const params = [];
+
+    if (department) {
+      sql += ' AND D.department_id = ?';
+      params.push(department);
+    }
+
+    // ✅ Accept both studentId and studentnumber
+    const studentNum = studentId || studentnumber;
+    if (studentNum && studentNum.trim() !== '') {
+      sql += ' AND A.STUDENTNUMBER = ?';
+      params.push(studentNum.trim());
+    }
+
+    if (course) {
+      sql += ' AND C.course_id = ?';
+      params.push(course);
+    }
+
+    if (level) {
+      sql += ' AND L.level_id = ?';
+      params.push(level);
+    }
+
+    sql += `
+      GROUP BY 
+        A.STUDENTNUMBER, 
+        A.FULLNAME, 
+        A.TEL, 
+        D.department_name, 
+        C.description, 
+        QQ.quiz_id,
+        Q.level_id `;
+
+    const [rows] = await pool.query(sql, params);
+    const passThreshold = 50;
+    const results = rows.map(r => {
+      const percentage =
+        r.total_possible_marks > 0
+          ? (r.total_marks_obtained / r.total_possible_marks) * 100
+          : 0;
+      const status = percentage >= passThreshold ? 'Pass' : 'Fail';
+      return {
+        ...r,
+        percentage: percentage.toFixed(2),
+        status
+      };
+    });
+    res.json(results);
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+
+app.put('/api/uquiz/:id/duration', (req, res) => {
+  const quizId = parseInt(req.params.id, 10);
+
+  if (isNaN(quizId)) {
+    return res.status(400).json({ error: 'Invalid quiz ID' });
+  }
+
+  const sql = 'UPDATE quizzes SET duration = 0 WHERE quiz_id = ?';
+  db.query(sql, [quizId], (err, result) => {
+    if (err) {
+      console.error('Error updating quiz duration:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    res.json({ message: 'Quiz duration updated to 0 successfully' });
+  });
+});
+
+app.post('/api/createfolder',async (req,res) => {
+  try {
+    const {name,department,course,level}=req.body;
+    if (!name || !department || !course || !level) {
+      return res.status(400).json({ message: 'All fields are required.' });
+    }
+    const id = Date.now(); // JS timestamp as unique folder ID
+    const sql = `
+      INSERT INTO folders (id, name,department, course, level)
+      VALUES (?, ?, ?, ?, ?)`;
+    await pool.execute(sql, [id, name, department, course, level]);
+    res.status(201).json({ message:'Folder created successfully',folderId: id});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
+// GET all folders
+app.get('/api/getfolders', async (req,res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, name, department, course, level, created_at AS createdAt
+      FROM folders
+      ORDER BY created_at DESC
+    `);
+
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
+
+// POST new course for a folder
+app.post('/api/createfoldercourse', async (req,res) => {
+  try {
+    const { folder_id, filename } = req.body;
+
+    if (!folder_id || !filename) {
+      return res.status(400).json({ message: 'folder_id and filename are required' });
+    }
+
+    const sql = `INSERT INTO folder_courses (folder_id, filename) VALUES (?, ?)`;
+    const [result] = await pool.execute(sql, [folder_id, filename]);
+
+    res.status(201).json({
+      message: 'Course added successfully',
+      folder_id,
+      filename,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+app.get('/api/folder-courses', async (req, res) => {
+  try {
+    const sql = `SELECT id, folder_id, filename FROM folder_courses ORDER BY id ASC`;
+    const [rows] = await pool.execute(sql);
+
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+// const storage = multer.diskStorage({
+//   destination: (req, file, cb) => {
+//     cb(null, 'uploads/'); // make sure folder exists
+//   },
+//   filename: (req, file, cb) => {
+//     // unique filename
+//     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+//     cb(null, uniqueSuffix + path.extname(file.originalname));
+//   },
+// });
+
+app.post('/api/upload-course', upload.single('file'), async (req, res) => {
+  try {
+    const {folderId}=req.body;
+    const file = req.file;
+    if(!folderId || !file){
+      return res.status(400).json({ error:'folderId and file are required'});
+    }
+    // Save to DB
+    const sql = 'INSERT INTO folder_courses (folder_id, filename) VALUES (?, ?)';
+    await pool.query(sql, [folderId, file.filename]);
+    res.json({
+      message:'File uploaded successfully',
+      file:{
+        originalname:file.originalname,
+        storedAs:file.filename,
+        path:file.path,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// DELETE a folder by ID
+app.delete('/api/folders/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Delete the folder
+    const sql = 'DELETE FROM folders WHERE id = ?';
+    const [result] = await pool.query(sql, [id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    // Because of ON DELETE CASCADE, folder_courses rows will be deleted automatically.
+    res.json({ message: 'Folder deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting folder:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+app.post('/api/uploadcourse', upload.single('file'), async (req, res) => {
+  try {
+    const { folderId } = req.body;
+    const file = req.file;
+
+    if (!folderId || !file) {
+      return res.status(400).json({ error: 'folderId and file are required' });
+    }
+
+    // Save to DB (store folder_id, filename, path, originalname, storedAs)
+    const sql =
+      'INSERT INTO folder_courses (folder_id, filename, path, originalname, storedAs) VALUES (?, ?, ?, ?, ?)';
+    await pool.query(sql, [
+      folderId,
+      file.filename,   // filename stored on server
+      file.path,       // full server path
+      file.originalname, // original uploaded filename
+      file.filename,   // storedAs (same as filename)
+    ]);
+
+    res.json({
+      message: 'Course uploaded successfully',
+      file: {
+        originalname: file.originalname,
+        storedAs: file.filename,
+        path: file.path,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+// GET files by folder ID
+app.get('/api/folder/:folderId/files', async (req, res) => {
+  try {
+    const { folderId } = req.params;
+
+    // Query the database
+    const sql = `
+      SELECT 
+        id,
+        folder_id,
+        originalname,
+        storedAs,
+        filename,
+        path,
+        created_at
+      FROM folder_courses
+      WHERE folder_id = ? 
+      ORDER BY created_at DESC
+    `;
+    const [rows] = await pool.query(sql, [folderId]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching files:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+ app.get('/api/accounts/:level/:department', async (req, res) => {
+  const {level, department } = req.params;
+  const sql = `
+    SELECT A.EMAIL FROM account A INNER JOIN level L ON A.CLASSES=L.level_id INNER JOIN department D ON A.DEPARTMENT=D.department_id
+WHERE L.level_id=? AND D.department_name=?`;
+    const [rows] = await pool.query(sql, [department, level]);
+    res.json(rows);
+});
+
+
+app.get('/emails', async (req, res) => {
+  const { level_id,department_name }=req.query;
+
+  if (!level_id || !department_name) {
+    return res.status(400).json({ error: 'Please provide level_id and department_name' });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT A.EMAIL
+       FROM account A
+       INNER JOIN level L ON A.CLASSES = L.level_id
+       INNER JOIN department D ON A.DEPARTMENT = D.department_id
+       WHERE L.level_id = ? AND D.department_name = ?`,
+      [level_id, department_name] // parameters from URL
+    );
+
+  
+   // Convert array of objects → array of email strings
+    const emails = rows.map(row => row.EMAIL);
+
+    res.json(emails); // flat array
+   // res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database query failed' });
+  }
+});
+
+app.get("/department/total", async (req, res) => {
+      try{
+        const [rows] = await pool.query(
+         `SELECT COUNT(department_id) AS total FROM department`
+       );
+
+    // rows will be an array like: [ { total: 123 } ]
+    res.json(rows[0]); 
+    }catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database query failed" });
+    }
+   });
+
+   app.get("/course/total", async (req, res) => {
+      try{
+        const [rows] = await pool.query(
+         `SELECT count(course_id) as total FROM course`
+       );
+
+    // rows will be an array like: [ { total: 123 } ]
+    res.json(rows[0]); 
+    }catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database query failed" });
+    }
+   });
+
+      app.get("/account/total", async (req, res) => {
+      try{
+        const [rows] = await pool.query(
+          `SELECT count(ID) AS total FROM account`
+       );
+
+    // rows will be an array like: [ { total: 123 } ]
+    res.json(rows[0]); 
+    }catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database query failed" });
+    }
+   });
+
+ app.get("/departs/total", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        COUNT(a.ID) AS student, 
+        d.department_name AS department
+      FROM department d
+      INNER JOIN account a 
+        ON d.department_id = a.DEPARTMENT
+      GROUP BY d.department_name
+    `);
+
+  // Force student → number
+    const result = (rows ).map(r => ({
+      student: Number(r.student),
+      department: r.department,
+    }));
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching department students:", error);
+    res.status(500).json({ error: "Failed to fetch data" });
+  }
+});
+
+
+
+ app.get("/courses/total", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+ SELECT c.description AS name, SUM(CASE WHEN op.is_correct = 1 THEN qq.marks ELSE 0 END) AS value FROM student_answer sa INNER JOIN question_options op ON sa.option_id = op.option_id INNER JOIN quiz_questions qq ON sa.question_id = qq.question_id INNER JOIN account s ON sa.student_id = s.ID INNER JOIN DEPARTMENT d ON s.DEPARTMENT = d.department_id INNER JOIN quizzes qs ON qq.quiz_id = qs.quiz_id INNER JOIN course c ON qs.course_id = c.course_id JOIN level lv ON qs.level_id = lv.level_id GROUP by c.description
+    `);
+
+  // Force student → number
+    const result = (rows ).map(r => ({
+      name: r.name,
+      value: Number(r.value),
+      
+    }));
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching department students:", error);
+    res.status(500).json({ error: "Failed to fetch data" });
+  }
+});
+
+
+ app.get("/departresult/total", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT d.department_name AS department, SUM(CASE WHEN op.is_correct = 1 THEN qq.marks ELSE 0 END) AS marksobtained FROM student_answer sa INNER JOIN question_options op ON sa.option_id = op.option_id INNER JOIN quiz_questions qq ON sa.question_id = qq.question_id INNER JOIN account s ON sa.student_id = s.ID INNER JOIN DEPARTMENT d ON s.DEPARTMENT = d.department_id INNER JOIN quizzes qs ON qq.quiz_id = qs.quiz_id INNER JOIN course c ON qs.course_id = c.course_id JOIN level lv ON qs.level_id = lv.level_id group by d.department_name`
+    );
+
+  // Force student → number
+    const result = (rows ).map(r => ({
+      marksobtained: Number(r.marksobtained),
+      department: r.department,
+    }));
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching department students:", error);
+    res.status(500).json({ error: "Failed to fetch data" });
+  }
+});
+
+
+
+// Configure your SMTP transporter
+// Create Nodemailer transporter using AWS SES SMTP
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: process.env.SMTP_PORT,
+  secure:false, // true for 465, false for 587
+  auth: {
+    user:process.env.SMTP_USER,
+    pass:process.env.SMTP_PASS,
+  },
+  connectionTimeout: 10000 // 10 seconds
+});
+
+
+// Create Nodemailer transporter using AWS SES SMTP
+app.post("/api/sendemail", async (req, res) => {
+  const {to,subject,text} =req.body;
+  try {
+    const info = await transporter.sendMail({
+      from:process.env.FROM_EMAIL,
+       to:Array.isArray(to) ? to.join(','):to,
+      subject,
+      text:text //fallback to body if text is not provided
+       // also add HTML for Gmail rendering
+    });
+
+    
+
+    console.log("Message sent:",info.messageId);
+    res.json({ message: "Email sent successfully", id: info.messageId });
+    }catch (error) {
+    console.error("Error sending email:", error);
+    res.status(500).json({ error: "Failed to send email" });
+   }
+  });
+
+
+ // Insert message API
+app.post("/insertmessage", (req, res) => {
+  const { sender_id, sender_name, room, content } = req.body;
+
+  // SQL insert - let MySQL auto-generate timestamp
+  const sql = `INSERT INTO messages (sender_id, sender_name, room, content) VALUES (?, ?, ?, ?)`;
+  db.query(sql, [sender_id, sender_name, room, content], (err, result) => {
+    if (err) {
+      console.error("Error inserting message:", err);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    // ✅ Get current timestamp (or let MySQL's DEFAULT CURRENT_TIMESTAMP handle it)
+    const now = new Date(); 
+
+    // Build full message object
+    const savedMessage = {
+      id: result.insertId,
+      sender_id,
+      sender_name,
+      room,
+      content,
+      time: now // send back a valid time
+    };
+
+    // Emit to socket.io room
+    io.to(room).emit("chatMessage", savedMessage);
+
+    res.json(savedMessage);
+  });
+});
+
+// Get messages by room
+app.get("/api/messages/:room", (req, res) => {
+  const room = req.params.room;
+  const sql = "SELECT * FROM messages WHERE room = ? ORDER BY time ASC";
+
+  db.query(sql, [room], (err, rows) => {
+    if (err) {
+      console.error("Error fetching messages:", err);
+      return res.status(500).json({ error: "Database error" });
+    }
+    res.json(rows);
+  });
+});
+
 
 
 // Start server
@@ -1529,15 +2700,22 @@ const io = new Server(server, {
        //rooms.push(newRoom);
        socket.join(roomName);
        console.log(`Socket ${socket.id} joined room ${roomName}`);
+        // Save the room in socket instance
+         socket.roomNumber = roomName;
         io.emit("checking",{sockets:socket.id,room:roomName}); // broadcast updated rooms
+      
       });
 
            //Handle room joining
-      socket.on("sendmessage",(msg) =>{
+     socket.on("sendmessage",(msg) =>{
       console.log("Server received message from app:",msg);
       io.to(msg.room).emit("sendback",msg)
       // socket.to(msg.room).emit("sendback",msg);//broadcast to everyone
      });
+
+
+
+
 
     socket.on("disconnect", () => {
     console.log("❌ User disconnected:", socket.id);
