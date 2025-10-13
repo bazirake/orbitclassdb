@@ -1,5 +1,6 @@
 const express =require('express');
 const nodemailer =require('nodemailer');
+const validator = require("validator"); // npm install validator
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
@@ -2591,26 +2592,65 @@ const transporter = nodemailer.createTransport({
 
 
 // Create Nodemailer transporter using AWS SES SMTP
-app.post("/api/sendemail", async (req, res) => {
-  const {to,subject,text} =req.body;
-  try {
-    const info = await transporter.sendMail({
-      from:process.env.FROM_EMAIL,
-       to:Array.isArray(to) ? to.join(','):to,
-      subject,
-      text:text //fallback to body if text is not provided
-       // also add HTML for Gmail rendering
-    });
+// app.post("/api/sendemail", async (req, res) => {
+//   const {to,subject,text} =req.body;
+//   try {
+//     const info = await transporter.sendMail({
+//       from:process.env.FROM_EMAIL,
+//        to:Array.isArray(to) ? to.join(','):to,
+//       subject,
+//       text:text //fallback to body if text is not provided
+//        // also add HTML for Gmail rendering
+//     });
 
     
 
-    console.log("Message sent:",info.messageId);
-    res.json({ message: "Email sent successfully", id: info.messageId });
-    }catch (error) {
+//     console.log("Message sent:",info.messageId);
+//     res.json({ message: "Email sent successfully", id: info.messageId });
+//     }catch (error) {
+//     console.error("Error sending email:", error);
+//     res.status(500).json({ error: "Failed to send email" });
+//    }
+//   });
+
+app.post("/api/sendemail", async (req, res) => {
+  const { to, subject, text } = req.body;
+
+  try {
+    // Ensure we always have an array of recipients
+    const recipients = Array.isArray(to) ? to : [to];
+
+    // Filter out invalid emails
+    const validEmails = recipients.filter(email => validator.isEmail(email.trim()));
+
+    if (validEmails.length === 0) {
+      return res.status(400).json({ error: "No valid email addresses provided" });
+    }
+
+    const info = await transporter.sendMail({
+      from: process.env.FROM_EMAIL,
+      to: validEmails.join(","), // only valid emails
+      subject,
+      text: text || "No message body provided",
+      html: `<p>${text || "No message body provided"}</p>` // optional HTML
+    });
+
+    // Log skipped invalid emails
+    const skippedEmails = recipients.filter(email => !validator.isEmail(email.trim()));
+
+    console.log("Message sent:", info.messageId);
+    res.json({
+      message: "Email sent successfully",
+      id: info.messageId,
+      sent_to: validEmails,
+      skipped_invalid: skippedEmails
+    });
+
+  } catch (error) {
     console.error("Error sending email:", error);
-    res.status(500).json({ error: "Failed to send email" });
-   }
-  });
+    res.status(500).json({ error: "Failed to send email", details: error.message });
+  }
+});
 
 
  // Insert message API
