@@ -1621,12 +1621,12 @@ app.post('/timetableSearch', async (req, res) => {
 
 
 
-// GET /api/quizzes?prepared_by=24
-app.get('/quizzes', async (req,res) => {
-  try {
+   //GET /api/quizzes?prepared_by=24
+    app.get('/quizzes', async (req,res) => {
+    try {
     const quiz_id = parseInt(req.query.quiz_id);
-    if (!quiz_id) {
-      return res.status(400).json({ message: 'prepared_by query parameter is required and must be a number.' });
+    if(!quiz_id) {
+      return res.status(400).json({ message:'prepared_by query parameter is required and must be a number.' });
     }
 
     const sql = `
@@ -2272,6 +2272,30 @@ app.get('/api/getfolders', async (req,res) => {
 
 
 
+  app.get('/api/folders/:department/:level',async (req, res) =>{
+
+   try{
+    const { department, level } = req.params;
+    // Validate parameters
+    if(!department || !level) {
+      return res.status(400).json({ error: 'Department and level are required' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT id, name, department, course, level, created_at AS createdAt
+      FROM folders
+      WHERE department = ? AND level = ?
+      ORDER BY created_at DESC
+    `, [department, level]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
+
+
 // POST new course for a folder
 app.post('/api/createfoldercourse', async (req,res) => {
   try {
@@ -2555,6 +2579,51 @@ app.get("/department/total", async (req, res) => {
   }
 });
 
+
+// ✅ GET /api/courses?department_id=1&level_id=2
+app.get('/api/coursess', (req, res) => {
+  const { department_id, level_id } = req.query;
+
+  // Base SQL with JOINs
+  let sql = `
+    SELECT 
+      course.course_id,
+      course.course_name,
+      course.description,
+      course.credit_hours,
+      level.description AS level_description,
+      department.department_name,
+      course.created_at,
+      course.updated_at
+    FROM course
+    INNER JOIN department ON course.department_id = department.department_id
+    INNER JOIN level ON course.level_id = level.level_id
+    WHERE 1=1
+  `;
+
+  const params = [];
+
+  // Add filters dynamically
+  if (department_id) {
+    sql += ' AND course.department_id = ?';
+    params.push(department_id);
+  }
+
+  if (level_id) {
+    sql += ' AND course.level_id = ?';
+    params.push(level_id);
+  }
+
+  // Execute query
+  db.query(sql, params, (err, results) => {
+    if (err) {
+      console.error('❌ Error executing query:', err);
+      return res.status(500).json({ error: 'Database query failed' });
+    }
+
+    res.json(results);
+  });
+});
 
  app.get("/departresult/total", async (req, res) => {
   try {
