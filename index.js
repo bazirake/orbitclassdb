@@ -1548,6 +1548,7 @@ app.post('/timetableSearch', async (req, res) => {
       prepared_by,
       total_marks,
       duration,
+      at,
       deadline
     } = req.body;
 
@@ -1559,8 +1560,8 @@ app.post('/timetableSearch', async (req, res) => {
     // SQL Insert
     const sql = `
       INSERT INTO quizzes
-      (quiz_title, quiz_description, department_id, level_id, course_id, prepared_by, total_marks,duration,deadline)
-      VALUES (?, ?, ?, ?, ?, ?, ?,?,?)`;
+      (quiz_title, quiz_description, department_id, level_id, course_id, prepared_by, total_marks,duration,at,deadline)
+      VALUES (?, ?, ?, ?, ?, ?, ?,?,?,?)`;
 
     const values = [
       quiz_title,
@@ -1571,17 +1572,17 @@ app.post('/timetableSearch', async (req, res) => {
       prepared_by,
       total_marks,
       duration,
+      at,
       deadline
     ];
 
-    // Execute the query (use your pool or db connection)
-    const [result] = await pool.query(sql, values);
-
-    res.status(201).json({
-      message: 'Quiz created successfully',
-      quiz_id: result.insertId // use insertId from result
+     //Execute the query (use your pool or db connection)
+     const [result] = await pool.query(sql,values);
+     res.status(201).json({
+      message:'Quiz created successfully',
+      quiz_id:result.insertId // use insertId from result
     });
-  } catch (err) {
+  }catch(err){
     console.error(err);
     res.status(500).json({ message: 'Server error', error: err });
   }
@@ -1834,13 +1835,13 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
     const [rows] = await pool.query(
       `
       SELECT 
+        q.quiz_id,
         q.quiz_title,
         q.quiz_description,
         q.total_marks,
         q.deadline,
         qq.question_id,
         qq.marks,
-        qq.quiz_id,
         qq.question_text,
         op.option_id,
         op.option_text,
@@ -1851,29 +1852,30 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
       INNER JOIN quizzes q 
         ON qq.quiz_id = q.quiz_id
       WHERE q.department_id = ? AND q.level_id = ?
-      ORDER BY qq.question_id, op.option_id, q.created_at DESC
+      ORDER BY q.quiz_id DESC
+      LIMIT 1
       `,
       [department_id, level_id]
     );
 
-    // Group by quiz -> question -> options
-    const quizzesMap = {};
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'No quiz found' });
+    }
+
+    // Group question -> options
+    const quiz = {
+      quiz_id: rows[0].quiz_id,
+      quiz_title: rows[0].quiz_title,
+      quiz_description: rows[0].quiz_description,
+      total_marks: rows[0].total_marks,
+      deadline: rows[0].deadline,
+      questions: []
+    };
+
+    const questionsMap = {};
     rows.forEach(row => {
-      const quizKey = row.quiz_id;
-
-      if (!quizzesMap[quizKey]) {
-        quizzesMap[quizKey] = {
-          quiz_id: row.quiz_id,
-          quiz_title: row.quiz_title,
-          quiz_description: row.quiz_description,
-          total_marks: row.total_marks,
-          deadline: row.deadline, // new
-          questions: {}
-        };
-      }
-
-      if (!quizzesMap[quizKey].questions[row.question_id]) {
-        quizzesMap[quizKey].questions[row.question_id] = {
+      if (!questionsMap[row.question_id]) {
+        questionsMap[row.question_id] = {
           question_id: row.question_id,
           question_text: row.question_text,
           marks: row.marks,
@@ -1881,28 +1883,48 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
         };
       }
 
-      quizzesMap[quizKey].questions[row.question_id].options.push({
+      questionsMap[row.question_id].options.push({
         option_id: row.option_id,
         option_text: row.option_text,
         is_correct: row.is_correct
       });
     });
 
-    // Convert nested object to array
-    const quizzesArray = Object.values(quizzesMap).map(quiz => ({
-      quiz_id: quiz.quiz_id,
-      quiz_title: quiz.quiz_title,
-      quiz_description: quiz.quiz_description,
-      total_marks: quiz.total_marks,
-      deadline: quiz.deadline, // new
-      questions: Object.values(quiz.questions)
-    }));
+    quiz.questions = Object.values(questionsMap);
 
-    res.json(quizzesArray);
+    res.json(quiz);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });
   }
+});
+
+app.get("/api/quiz/latest", (req, res) => {
+  const { deptid, level_id } = req.query;
+
+  // Validate params
+  if (!deptid || !level_id) {
+    return res.status(400).json({ error: "deptid and level_id are required" });
+  }
+
+  const sql = `
+    SELECT q.quiz_id,q.deadline,q.at
+    FROM quizzes q
+    WHERE q.department_id = ? AND q.level_id = ?
+    ORDER BY q.quiz_id DESC
+    LIMIT 1
+  `;
+
+  db.query(sql, [deptid, level_id], (err, result) => {
+    if(err){
+      console.error("Error fetching quiz:", err);
+      return res.status(500).json({ error: "Database error" });
+    }
+    if (result.length === 0){
+      return res.status(404).json({message: "No quiz found for this department and level" });
+    }
+    res.json(result[0]);
+  });
 });
 
 
@@ -2064,7 +2086,6 @@ app.post('/api/student-answers', async (req, res) => {
 // Assuming Express and a MySQL pool
 app.get('/api/student-result/:studentId/:quizId', async (req, res) => {
   const { studentId, quizId } = req.params;
-
   try {
     const [rows] = await pool.query(
       `SELECT 
@@ -2087,7 +2108,6 @@ app.get('/api/student-result/:studentId/:quizId', async (req, res) => {
     if (rows.length===0){
        return res.status(404).json({message:'No answers found for this student/quiz'});
     }
-
     const result = rows[0];
     const percentage =
       (result.total_marks_obtained / result.total_possible_marks) * 100;
@@ -2295,6 +2315,29 @@ app.get('/api/getfolders', async (req,res) => {
   }
 });
 
+
+  app.get('/api/foldert/:department',async (req, res) =>{
+
+   try{
+    const { department} = req.params;
+    // Validate parameters
+    if(!department) {
+      return res.status(400).json({ error: 'Department is required' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT id, name, department, course, level, created_at AS createdAt
+      FROM folders
+      WHERE department = ? 
+      ORDER BY created_at DESC
+    `,[department]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', error: err });
+  }
+});
 
 // POST new course for a folder
 app.post('/api/createfoldercourse', async (req,res) => {
