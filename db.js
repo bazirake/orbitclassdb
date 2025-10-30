@@ -20,8 +20,8 @@ const db = mysql.createConnection({
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
-  //timezone: "+02:00", // ✅ Rwanda time (UTC+2)
-  dateStrings: true
+  //timezone:"+02:00", // ✅ Rwanda time (UTC+2)
+  dateStrings:true
 });
 
 

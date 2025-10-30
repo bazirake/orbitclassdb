@@ -1899,6 +1899,78 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
   }
 });
 
+
+
+app.get('/api/quizzes/:quiz_id', async (req, res) => {
+  const { quiz_id } = req.params;
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT 
+        q.quiz_id,
+        q.quiz_title,
+        q.quiz_description,
+        q.total_marks,
+        q.deadline,
+        qq.question_id,
+        qq.marks,
+        qq.question_text,
+        op.option_id,
+        op.option_text,
+        op.is_correct
+      FROM quiz_questions qq
+      INNER JOIN question_options op 
+        ON qq.question_id = op.question_id
+      INNER JOIN quizzes q 
+        ON qq.quiz_id = q.quiz_id
+      WHERE q.quiz_id = ?
+      ORDER BY qq.question_id ASC
+      `,
+      [quiz_id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    // ✅ Build quiz structure
+    const quiz = {
+      quiz_id: rows[0].quiz_id,
+      quiz_title: rows[0].quiz_title,
+      quiz_description: rows[0].quiz_description,
+      total_marks: rows[0].total_marks,
+      deadline: rows[0].deadline,
+      questions: []
+    };
+
+    const questionsMap = {};
+    rows.forEach(row => {
+      if (!questionsMap[row.question_id]) {
+        questionsMap[row.question_id] = {
+          question_id: row.question_id,
+          question_text: row.question_text,
+          marks: row.marks,
+          options: []
+        };
+      }
+
+      questionsMap[row.question_id].options.push({
+        option_id: row.option_id,
+        option_text: row.option_text,
+        is_correct: row.is_correct
+      });
+    });
+
+    quiz.questions = Object.values(questionsMap);
+
+    res.json(quiz);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 app.get("/api/quiz/latest", (req, res) => {
   const { deptid, level_id } = req.query;
 
@@ -2230,6 +2302,124 @@ app.get('/api/student-results', async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+app.get('/api/student/performance/:studentNumber', async (req, res) => {
+  const { studentNumber } = req.params;
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT 
+          A.STUDENTNUMBER,
+          A.FULLNAME AS student_name,
+          A.TEL AS student_tel,
+          D.department_name AS department,
+          C.description AS course,
+          L.level_id AS level_of_study,
+          SUM(QQ.marks) AS max_marks,
+          SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) AS obtained_marks,
+          ROUND(
+              (SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+              / NULLIF(SUM(QQ.marks), 0), 2
+          ) AS overall_percentage,
+          CASE 
+              WHEN (SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0) >= 90 THEN 'A'
+              WHEN (SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0) >= 80 THEN 'B'
+              WHEN (SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0) >= 70 THEN 'C'
+              WHEN (SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0) >= 60 THEN 'D'
+              WHEN (SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0) >= 50 THEN 'E'
+              ELSE 'F'
+          END AS overall_grade
+      FROM student_answer SA
+      INNER JOIN question_options O ON SA.option_id = O.option_id
+      INNER JOIN quiz_questions QQ ON SA.question_id = QQ.question_id
+      INNER JOIN account A ON SA.student_id = A.ID
+      INNER JOIN department D ON A.DEPARTMENT = D.department_id
+      INNER JOIN quizzes Q ON QQ.quiz_id = Q.quiz_id
+      INNER JOIN course C ON Q.course_id = C.course_id
+      INNER JOIN level L ON Q.level_id = L.level_id
+      WHERE A.STUDENTNUMBER = ?
+      GROUP BY 
+          A.STUDENTNUMBER, A.FULLNAME, A.TEL, D.department_name, C.description, L.level_id
+      ORDER BY C.description;
+      `,
+      [studentNumber]
+    );
+
+    // ✅ If no records, just return an empty array
+    if (rows.length === 0) {
+      return res.json([]);
+    }
+
+    // ✅ Calculate totals and averages
+    const grandTotalMarks = rows.reduce((sum, row) => sum + Number(row.max_marks || 0), 0);
+    const totalObtainedMarks = rows.reduce((sum, row) => sum + Number(row.obtained_marks || 0), 0);
+    const overallAverage =
+      rows.length > 0
+        ? parseFloat(
+            (
+              rows.reduce((sum, row) => sum + Number(row.overall_percentage || 0), 0) /
+              rows.length
+            ).toFixed(2)
+          )
+        : 0;
+
+    // ✅ Determine overall grade
+    let overallGrade = 'F';
+    if (overallAverage >= 90) overallGrade = 'A';
+    else if (overallAverage >= 80) overallGrade = 'B';
+    else if (overallAverage >= 70) overallGrade = 'C';
+    else if (overallAverage >= 60) overallGrade = 'D';
+    else if (overallAverage >= 50) overallGrade = 'E';
+
+    const gradeRemarks = {
+      A: 'Excellent',
+      B: 'Very Good',
+      C: 'Good',
+      D: 'Fair',
+      E: 'Pass',
+      F: 'Fail'
+    };
+
+    // ✅ Build final response
+    const studentData = {
+      STUDENTNUMBER: rows[0].STUDENTNUMBER,
+      student_name: rows[0].student_name,
+      student_tel: rows[0].student_tel,
+      department: rows[0].department,
+      level_of_study: rows[0].level_of_study,
+      subjects: rows.map(row => ({
+        course: row.course,
+        max_marks: Number(row.max_marks),
+        obtained_marks: Number(row.obtained_marks),
+        overall_percentage: Number(row.overall_percentage),
+        overall_grade: row.overall_grade,
+        remark: gradeRemarks[row.overall_grade] || 'N/A'
+      })),
+      grand_total_marks: grandTotalMarks,
+      total_obtained_marks: totalObtainedMarks,
+      overall_average: overallAverage,
+      overall_grade: overallGrade,
+      overall_remark: gradeRemarks[overallGrade] || 'N/A'
+    };
+
+    res.json(studentData);
+  } catch (err) {
+    console.error('❌ Error fetching student performance:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+
+
+
+
 
 
 
@@ -2686,6 +2876,70 @@ app.get('/api/coursess', (req, res) => {
     res.status(500).json({ error: "Failed to fetch data" });
   }
 });
+
+
+// ✅ GET quizzes prepared by a specific user
+app.get("/api/quizzess/:prepared_by", (req, res) => {
+  const { prepared_by } = req.params;
+  const query = `
+    SELECT 
+      q.quiz_id,
+      q.quiz_title,
+      q.quiz_description,
+      q.department_id,
+      q.level_id,
+      l.description,
+      q.course_id,
+      q.prepared_by,
+      q.created_at,
+      q.duration,
+      c.course_name,
+      q.deadline,
+      q.total_marks,
+      q.at,
+      a.FULLNAME AS preparedby,
+      a.STUDENTNUMBER AS Lectnumber,
+      d.department_name
+    FROM quizzes q
+    INNER JOIN account a ON q.prepared_by = a.ID
+    INNER JOIN department d ON q.department_id = d.department_id
+    INNER JOIN course c ON q.course_id = c.course_id
+    INNER JOIN level l ON q.level_id = l.level_id
+    WHERE q.prepared_by = ?
+    ORDER BY q.created_at DESC `;
+
+   db.query(query, [prepared_by], (err, results) => {
+    if (err) {
+      console.error("Database error:", err);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: "No quizzes found for this lecturer." });
+    }
+
+    res.json(results);
+  });
+});
+
+// DELETE QUIZ BY ID
+app.delete('/api/delquizzes/:quiz_id', async (req, res) => {
+  const { quiz_id } = req.params;
+   try{
+     const [result] = await pool.query(
+      'DELETE FROM quizzes WHERE quiz_id = ?',
+      [quiz_id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+    res.status(200).json({ message: 'Quiz deleted successfully' });
+   }catch(err){
+    console.error('Error deleting quiz:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 
 
 
