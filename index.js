@@ -1853,7 +1853,6 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
         ON qq.quiz_id = q.quiz_id
       WHERE q.department_id = ? AND q.level_id = ?
       ORDER BY q.quiz_id DESC
-      LIMIT 1
       `,
       [department_id, level_id]
     );
