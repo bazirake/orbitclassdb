@@ -14,10 +14,12 @@ const jwt = require('jsonwebtoken');
 const session = require('express-session');
 const cors = require('cors');
 const app = express();
+
 const server = http.createServer(app); // now http is defined
 const cookieParser = require('cookie-parser');
 const port = process.env.PORT || 4000 
 const JWT_SECRET ='bazirake';
+
     // Node HTTP server
 app.use(cookieParser()); 
 // Middleware
@@ -3082,7 +3084,107 @@ const io = new Server(server, {
     io.on("connection",(socket) => {
     console.log("🔌User connected  to app:",socket.id);
     socket.emit("myid",socket.id);
+    socket.emit("notification", { type:"login",message:"User loged in"});
+    socket.on("menuVisited", (data) => {
+    console.log("📍Menu visited by user:", socket.id, data);
 
+    // ✅ Send the notification ONLY to this user
+    socket.emit("menuVisited", {
+      type: "timetable",
+      message: data.message,
+    });
+  });
+
+    socket.on("reportVisited", (data) => {
+    console.log("📑 Report visited by user:", socket.id, data);
+
+    // ✅ Send the notification ONLY to this user
+    socket.emit("reportVisited", {
+      type: "reports",
+      message: data.message,
+    });
+  });
+
+   socket.on("takequizVisited", (data) => {
+    console.log("📑 Takequiz visited by user:", socket.id, data);
+
+    // ✅ Send the notification ONLY to this user
+    socket.emit("takequizVisited", {
+      type: "takequiz",
+      message: data.message,
+    });
+  });
+
+   socket.on("studentinfoVisited", (data) => {
+    console.log("📑Studentinfo visited by user:", socket.id, data);
+
+    //✅Send the notification ONLY to this user
+    socket.emit("studentinfoVisited",{
+      type: "studentinfo",
+      message: data.message,
+    });
+  });
+
+    socket.on("chatVisited", (data) => {
+    console.log("📑Studentinfo visited by user:", socket.id, data);
+
+    //✅Send the notification ONLY to this user
+    socket.emit("chatVisited",{
+      type:"chat",
+      message:data.message,
+     });
+   });
+
+   socket.on("courseVisited", (data) => {
+    console.log("📑Studentinfo visited by user:", socket.id, data);
+
+    //✅Send the notification ONLY to this user
+    socket.emit("courseVisited",{
+      type:"course",
+      message:data.message,
+     });
+   });
+
+     socket.on("viewcourseVisited", (data) => {
+     console.log("📑Studentinfo visited by user:", socket.id, data);
+     //✅Send the notification ONLY to this user
+     socket.emit("viewcourseVisited",{
+      type:"viewourse",
+      message:data.message,
+     });
+   });
+
+    socket.on("assignquizVisited", (data) => {
+     console.log("📑Studentinfo visited by user:", socket.id, data);
+     //✅Send the notification ONLY to this user
+     socket.emit("assignquizVisited",{
+      type:"viewquiz",
+      message:data.message,
+     });
+   });
+
+     socket.on("dashboardVisited", (data) => {
+     console.log("📑Studentinfo visited by user:", socket.id, data);
+     //✅Send the notification ONLY to this user
+     socket.emit("dashboardVisited",{
+      type:"dashboard",
+      message:data.message,
+     });
+   });
+
+   
+    // this is for broadcasting all users notification
+    //  socket.on("menuVisited",(data)=>{
+    //  console.log("Menu visited:", data);
+    //    // Optionally broadcast to others
+    //    socket.broadcast.emit("menuVisited", { type: "timetable",message:data.message});
+    //   });
+    //   socket.on("reportVisited",(data)=>{
+    //  console.log("Menu visited:", data);
+    // // Optionally broadcast to others
+    //  socket.broadcast.emit("reportVisited", { type: "report",message:data.message});
+    //   });
+   
     // Handle room joining
   //  socket.on('join_room', (room) => {
   //   socket.join(room); // Join the specified room
