@@ -1919,6 +1919,38 @@ app.get("/api/quizzes/list", async (req, res) => {
   }
 });
 
+app.get("/quizzes/complete/:departmentId/:levelId", async (req, res) => {
+  try {
+    const { departmentId, levelId } = req.params;
+
+    const query = `
+      SELECT 
+        quiz_id, quiz_title, quiz_description, department_id,
+        level_id, course_id, prepared_by, created_at, duration,
+        deadline, total_marks
+      FROM quizzes
+      WHERE created_at <= NOW()
+        AND department_id = ?
+        AND level_id = ?
+    `;
+
+    const [rows] = await pool.query(query, [departmentId, levelId]);
+
+    res.json({
+      success: true,
+      count: rows.length,
+      data: rows,
+    });
+
+  } catch (err) {
+    console.error("Error fetching quizzes:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+});
+
 
 app.get('/api/quizzes/:quiz_id', async (req, res) => {
   const { quiz_id } = req.params;
