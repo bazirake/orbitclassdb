@@ -1550,10 +1550,8 @@ app.post('/timetableSearch', async (req, res) => {
       prepared_by,
       total_marks,
       duration,
-      at,
       deadline
     } = req.body;
-
     // Basic validation
     if (!quiz_title || !prepared_by) {
       return res.status(400).json({ message: 'quiz_title and prepared_by are required.' });
@@ -1562,8 +1560,8 @@ app.post('/timetableSearch', async (req, res) => {
     // SQL Insert
     const sql = `
       INSERT INTO quizzes
-      (quiz_title, quiz_description, department_id, level_id, course_id, prepared_by, total_marks,duration,at,deadline)
-      VALUES (?, ?, ?, ?, ?, ?, ?,?,?,?)`;
+      (quiz_title, quiz_description, department_id, level_id, course_id, prepared_by, total_marks,duration,deadline)
+      VALUES (?, ?, ?, ?, ?, ?, ?,?,?)`;
 
     const values = [
       quiz_title,
@@ -1574,7 +1572,6 @@ app.post('/timetableSearch', async (req, res) => {
       prepared_by,
       total_marks,
       duration,
-      at,
       deadline
     ];
 
@@ -1836,26 +1833,20 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `
-      SELECT 
-        q.quiz_id,
-        q.quiz_title,
-        q.quiz_description,
-        q.total_marks,
-        q.deadline,
-        qq.question_id,
-        qq.marks,
-        qq.question_text,
-        op.option_id,
-        op.option_text,
-        op.is_correct
-      FROM quiz_questions qq
-      INNER JOIN question_options op 
-        ON qq.question_id = op.question_id
-      INNER JOIN quizzes q 
-        ON qq.quiz_id = q.quiz_id
-      WHERE q.department_id = ? AND q.level_id = ?
-      ORDER BY q.quiz_id DESC
-      `,
+     SELECT 
+    q.quiz_id, q.quiz_title, q.quiz_description, q.total_marks, q.deadline,
+    qq.question_id, qq.marks, qq.question_text,
+    op.option_id, op.option_text, op.is_correct
+FROM quizzes q
+INNER JOIN quiz_questions qq ON qq.quiz_id = q.quiz_id
+INNER JOIN question_options op ON qq.question_id = op.question_id
+WHERE q.department_id = 3
+  AND q.level_id = 3
+  AND q.quiz_id = (
+      SELECT MAX(quiz_id)
+      FROM quizzes
+      WHERE department_id =? AND level_id = ?
+  );`,
       [department_id, level_id]
     );
 
@@ -1875,8 +1866,8 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
 
     const questionsMap = {};
     rows.forEach(row => {
-      if (!questionsMap[row.question_id]) {
-        questionsMap[row.question_id] = {
+      if (!questionsMap[row.question_id]){
+         questionsMap[row.question_id] = {
           question_id: row.question_id,
           question_text: row.question_text,
           marks: row.marks,
@@ -1900,6 +1891,33 @@ app.get('/api/quizzes/:department_id/:level_id', async (req, res) => {
   }
 });
 
+
+
+
+// GET /api/quizzes/latest?deptid=1&levelid=2
+app.get("/api/quizzes/list", async (req, res) => {
+  const department_id = req.query.deptid ;
+  const level_id = req.query.level_id;
+
+  if (!department_id || !level_id) {
+    return res.status(400).json({ error: "department_id and level_id are required" });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT quiz_id, quiz_title, quiz_description, deadline, total_marks
+       FROM quizzes
+       WHERE department_id = ? AND level_id = ? 
+       ORDER BY created_at DESC LIMIT 1`,
+      [department_id, level_id]
+    );
+
+    return res.json(rows);
+  } catch (err) {
+    console.error("Failed to fetch quizzes:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
 
 
 app.get('/api/quizzes/:quiz_id', async (req, res) => {
@@ -1981,7 +1999,7 @@ app.get("/api/quiz/latest", (req, res) => {
   }
 
   const sql = `
-    SELECT q.quiz_id,q.deadline,q.at
+    SELECT q.quiz_id,q.deadline
     FROM quizzes q
     WHERE q.department_id = ? AND q.level_id = ?
     ORDER BY q.quiz_id DESC
@@ -2881,7 +2899,7 @@ app.get('/api/coursess', (req, res) => {
 
 // ✅ GET quizzes prepared by a specific user
 app.get("/api/quizzess/:prepared_by", (req, res) => {
-  const { prepared_by } = req.params;
+  const { prepared_by}=req.params;
   const query = `
     SELECT 
       q.quiz_id,
@@ -2897,7 +2915,6 @@ app.get("/api/quizzess/:prepared_by", (req, res) => {
       c.course_name,
       q.deadline,
       q.total_marks,
-      q.at,
       a.FULLNAME AS preparedby,
       a.STUDENTNUMBER AS Lectnumber,
       d.department_name
