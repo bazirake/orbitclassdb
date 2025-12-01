@@ -1925,14 +1925,13 @@ app.get("/quizzes/complete/:departmentId/:levelId", async (req, res) => {
 
     const query = `
       SELECT 
-        quiz_id, quiz_title, quiz_description, department_id,
-        level_id, course_id, prepared_by, created_at, duration,
-        deadline, total_marks
-      FROM quizzes
-      WHERE created_at <= NOW()
-        AND department_id = ?
-        AND level_id = ?
-    `;
+         quiz_id, quiz_title, quiz_description, department_id,
+         level_id, course_id, prepared_by, created_at, duration,
+         deadline, total_marks
+         FROM quizzes
+         WHERE created_at <= NOW()
+         AND department_id = ?
+         AND level_id = ? `;
 
     const [rows] = await pool.query(query, [departmentId, levelId]);
 
@@ -1947,6 +1946,47 @@ app.get("/quizzes/complete/:departmentId/:levelId", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server Error",
+    });
+  }
+});
+
+
+
+// API endpoint
+app.get("/api/quizzes/ass", async (req, res) => {
+  try {
+    const { department_id, level_id } = req.query;
+
+    if (!department_id || !level_id) {
+      return res.status(400).json({
+        error: "department_id and level_id are required",
+      });
+    }
+
+    const sql = `
+      SELECT 
+          q.quiz_title,
+          COUNT(qq.question_id) AS totalq,
+          c.course_name,
+          q.deadline,
+          q.duration
+      FROM quiz_questions qq
+      INNER JOIN quizzes q ON qq.quiz_id = q.quiz_id
+      INNER JOIN course c ON q.course_id = c.course_id
+      WHERE q.department_id = ?
+        AND q.level_id = ?
+        AND q.deadline <= NOW()
+      GROUP BY q.quiz_title, c.course_name, q.deadline, q.duration
+    `;
+
+    const [rows] = await pool.query(sql, [department_id, level_id]);
+
+    res.json(rows);
+
+  } catch (error) {
+    console.error("API Error:", error);
+    res.status(500).json({
+      error: "Internal server error",
     });
   }
 });
