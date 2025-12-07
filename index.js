@@ -14,7 +14,7 @@ const jwt = require('jsonwebtoken');
 const session = require('express-session');
 const cors = require('cors');
 const app = express();
-
+let otpStore = {};
 const server = http.createServer(app); // now http is defined
 const cookieParser = require('cookie-parser');
 const port = process.env.PORT || 4000 
@@ -2655,16 +2655,6 @@ app.get('/api/folder-courses', async (req, res) => {
   }
 });
 
-// const storage = multer.diskStorage({
-//   destination: (req, file, cb) => {
-//     cb(null, 'uploads/'); // make sure folder exists
-//   },
-//   filename: (req, file, cb) => {
-//     // unique filename
-//     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-//     cb(null, uniqueSuffix + path.extname(file.originalname));
-//   },
-// });
 
 app.post('/api/upload-course', upload.single('file'), async (req, res) => {
   try {
@@ -3047,31 +3037,51 @@ const transporter = nodemailer.createTransport({
 });
 
 
-// Create Nodemailer transporter using AWS SES SMTP
-// app.post("/api/sendemail", async (req, res) => {
-//   const {to,subject,text} =req.body;
-//   try {
-//     const info = await transporter.sendMail({
-//       from:process.env.FROM_EMAIL,
-//        to:Array.isArray(to) ? to.join(','):to,
-//       subject,
-//       text:text //fallback to body if text is not provided
-//        // also add HTML for Gmail rendering
-//     });
 
-    
+// POST /send-otp
+app.post("/send-otp", async (req, res) => {
+  const { email } = req.body;
 
-//     console.log("Message sent:",info.messageId);
-//     res.json({ message: "Email sent successfully", id: info.messageId });
-//     }catch (error) {
-//     console.error("Error sending email:", error);
-//     res.status(500).json({ error: "Failed to send email" });
-//    }
-//   });
+  if (!email) {
+    return res.json({ success: false, message: "Email is required" });
+  }
+
+  // Generate 6-digit OTP
+  const otp=Math.floor(100000 + Math.random() * 900000);
+  otpStore[email]=otp; // store OTP temporarily
+
+  
+
+  // Mail options
+  const mailOptions={
+    from:process.env.FROM_EMAIL,
+    to:email,
+    subject:"Your Verification OTP",
+    text:`Your OTP code is:${otp}`,
+  };
+  try{
+      await transporter.sendMail(mailOptions);
+      console.log(`OTP ${otp} sent to ${email}`);
+      return res.json({ success: true });
+    }catch(error){
+     console.error("Error sending OTP:", error);
+     return res.json({ success: false, message: "Failed to send OTP" });
+  }
+ });
+
+  //Optional: Endpoint to verify OTP
+  app.post("/verify-otp", (req, res) => {
+  const { email, otp } = req.body;
+  if(otpStore[email] && otpStore[email].toString() === otp.toString()) {
+  delete otpStore[email]; // OTP used, remove it
+  return res.json({valid:true});
+  }else{
+     return res.json({valid:false});
+   }
+ });
 
 app.post("/api/sendemail", async (req, res) => {
   const { to, subject, text } = req.body;
-
   try {
     // Ensure we always have an array of recipients
     const recipients = Array.isArray(to) ? to : [to];
