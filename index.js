@@ -1950,47 +1950,38 @@ app.get("/quizzes/complete/:departmentId/:levelId", async (req, res) => {
   }
 });
 
-
-
 // API endpoint
-app.get("/api/quizzes/ass", async (req, res) => {
+app.get("/api/quizzes/ass",async(req,res)=>{
   try {
     const { department_id, level_id } = req.query;
-
     if (!department_id || !level_id) {
       return res.status(400).json({
         error: "department_id and level_id are required",
       });
     }
-
     const sql = `
-      SELECT 
+       SELECT 
           q.quiz_title,
           COUNT(qq.question_id) AS totalq,
           c.course_name,
           q.deadline,
           q.duration
-      FROM quiz_questions qq
-      INNER JOIN quizzes q ON qq.quiz_id = q.quiz_id
-      INNER JOIN course c ON q.course_id = c.course_id
-      WHERE q.department_id = ?
+       FROM quiz_questions qq
+       INNER JOIN quizzes q ON qq.quiz_id = q.quiz_id
+       INNER JOIN course c ON q.course_id = c.course_id
+       WHERE q.department_id = ?
         AND q.level_id = ?
-        AND q.deadline <= NOW()
-      GROUP BY q.quiz_title, c.course_name, q.deadline, q.duration
-    `;
-
-    const [rows] = await pool.query(sql, [department_id, level_id]);
-
+        AND q.deadline > NOW()
+       GROUP BY q.quiz_title, c.course_name, q.deadline,q.duration`;
+   const [rows]=await pool.query(sql, [department_id, level_id]);
     res.json(rows);
-
-  } catch (error) {
+   }catch(error){
     console.error("API Error:", error);
     res.status(500).json({
       error: "Internal server error",
     });
   }
 });
-
 
 app.get('/api/quizzes/:quiz_id', async (req, res) => {
   const { quiz_id } = req.params;
@@ -2396,7 +2387,6 @@ app.get('/api/student-results', async (req, res) => {
 
 app.get('/api/student/performance/:studentNumber', async (req, res) => {
   const { studentNumber } = req.params;
-
   try {
     const [rows] = await pool.query(
       `
@@ -2507,6 +2497,112 @@ app.get('/api/student/performance/:studentNumber', async (req, res) => {
 });
 
 
+app.get('/api/student/assess/:studentNumber', async (req, res) => {
+  const { studentNumber } = req.params;
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT 
+          Q.deadline,
+          C.description AS course,
+          Q.quiz_id,
+          Q.quiz_title,
+          SUM(QQ.marks) AS max_marks,
+          SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) AS obtained_marks,
+          ROUND(
+              (SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+              / NULLIF(SUM(QQ.marks), 0), 2
+          ) AS overall_percentage,
+          CASE 
+              WHEN ((SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0)) >= 90 THEN 'A'
+              WHEN ((SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0)) >= 80 THEN 'B'
+              WHEN ((SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0)) >= 70 THEN 'C'
+              WHEN ((SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0)) >= 60 THEN 'D'
+              WHEN ((SUM(CASE WHEN O.is_correct = 1 THEN QQ.marks ELSE 0 END) * 100.0)
+                   / NULLIF(SUM(QQ.marks), 0)) >= 50 THEN 'E'
+              ELSE 'F'
+          END AS overall_grade,
+          A.STUDENTNUMBER,
+          A.FULLNAME AS student_name,
+          A.TEL AS student_tel,
+          D.department_name AS department,
+          L.level_name AS level_of_study
+      FROM student_answer SA
+      INNER JOIN question_options O ON SA.option_id = O.option_id
+      INNER JOIN quiz_questions QQ ON SA.question_id = QQ.question_id
+      INNER JOIN account A ON SA.student_id = A.ID
+      INNER JOIN department D ON A.DEPARTMENT = D.department_id
+      INNER JOIN quizzes Q ON QQ.quiz_id = Q.quiz_id
+      INNER JOIN course C ON Q.course_id = C.course_id
+      INNER JOIN level L ON Q.level_id = L.level_id
+      WHERE A.ID = ?
+      GROUP BY 
+          C.description, 
+          Q.quiz_id, 
+          Q.quiz_title,
+          A.STUDENTNUMBER, 
+          A.FULLNAME, 
+          A.TEL, 
+          D.department_name, 
+          L.level_name
+      ORDER BY C.description, Q.quiz_id;
+      `,
+      [studentNumber]
+    );
+
+    if (rows.length === 0) return res.json([]);
+
+    const gradeRemarks = {
+      A: 'Excellent',
+      B: 'Very Good',
+      C: 'Good',
+      D: 'Fair',
+      E: 'Pass',
+      F: 'Fail'
+    };
+
+    const subjectList = rows.map(row => ({
+      deadline:row.deadline,
+      course: row.course,
+      quiz_id: row.quiz_id,
+      quiz_title: row.quiz_title,
+      max_marks: Number(row.max_marks || 0),
+      obtained_marks: Number(row.obtained_marks || 0),
+      overall_percentage: row.overall_percentage === null ? 0 : Number(row.overall_percentage),
+      overall_grade: row.overall_grade || 'F',
+      remark: gradeRemarks[row.overall_grade] || 'N/A'
+    }));
+
+    // optional totals / average (based on subjects)
+    const grandTotalMarks = subjectList.reduce((s, r) => s + r.max_marks, 0);
+    const totalObtainedMarks = subjectList.reduce((s, r) => s + r.obtained_marks, 0);
+    const overallAverage =
+    subjectList.length > 0
+        ? parseFloat((subjectList.reduce((s, r) => s + r.overall_percentage, 0) / subjectList.length).toFixed(2))
+        : 0;
+
+    let overallGrade = 'F';
+    if (overallAverage >= 90) overallGrade = 'A';
+    else if (overallAverage >= 80) overallGrade = 'B';
+    else if (overallAverage >= 70) overallGrade = 'C';
+    else if (overallAverage >= 60) overallGrade = 'D';
+    else if (overallAverage >= 50) overallGrade = 'E';
+
+    const studentData={
+      subjects:subjectList
+    };
+
+    res.json(studentData);
+  } catch (err) {
+    console.error('❌ Error fetching student performance:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 
 
